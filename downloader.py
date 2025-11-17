@@ -9,20 +9,32 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
 class MediaDownloader:
     def __init__(self):
-        self.supported_platforms = [
-            'youtube.com', 'youtu.be',
-            'tiktok.com', 'vt.tiktok.com',
-            'instagram.com'
-        ]
+        self.platform_domains = {
+            'youtube': ['youtube.com', 'youtu.be'],
+            'tiktok': ['tiktok.com', 'vt.tiktok.com'],
+            'instagram': ['instagram.com']
+        }
+    
+    def detect_platform(self, url: str) -> str:
+        """Detect platform from URL"""
+        try:
+            domain = urlparse(url).netloc.lower()
+            for platform, domains in self.platform_domains.items():
+                if any(d in domain for d in domains):
+                    return platform
+            return 'unknown'
+        except:
+            return 'unknown'
     
     def is_supported(self, url: str) -> bool:
         """Check if URL is from a supported platform"""
-        return any(platform in url.lower() for platform in self.supported_platforms)
+        return self.detect_platform(url) != 'unknown'
     
     def download_video(self, url: str, output_path: str = None) -> dict:
         """
@@ -33,13 +45,16 @@ class MediaDownloader:
             output_path: Optional output directory
             
         Returns:
-            dict with status and file path or error
+            dict with status, platform, file_url and other info
         """
         try:
+            platform = self.detect_platform(url)
+            
             if not self.is_supported(url):
                 return {
                     'success': False,
-                    'error': 'Unsupported platform'
+                    'error': 'Unsupported platform',
+                    'platform': platform
                 }
             
             # Create temp directory if no output path specified
@@ -71,7 +86,8 @@ class MediaDownloader:
                 logger.error(f"yt-dlp error: {result.stderr}")
                 return {
                     'success': False,
-                    'error': 'Download failed'
+                    'error': 'Download failed',
+                    'platform': platform
                 }
             
             # Get file path from output
@@ -80,26 +96,32 @@ class MediaDownloader:
             if not os.path.exists(file_path):
                 return {
                     'success': False,
-                    'error': 'File not found after download'
+                    'error': 'File not found after download',
+                    'platform': platform
                 }
             
             return {
                 'success': True,
                 'file_path': file_path,
-                'filename': os.path.basename(file_path)
+                'file_url': file_path,  # For compatibility with bot.py
+                'filename': os.path.basename(file_path),
+                'platform': platform,
+                'media_type': 'video'
             }
             
         except subprocess.TimeoutExpired:
             logger.error("Download timeout")
             return {
                 'success': False,
-                'error': 'Download timeout'
+                'error': 'Download timeout',
+                'platform': self.detect_platform(url)
             }
         except Exception as e:
             logger.error(f"Download error: {e}")
             return {
                 'success': False,
-                'error': str(e)
+                'error': str(e),
+                'platform': self.detect_platform(url)
             }
     
     def download_audio(self, url: str, output_path: str = None) -> dict:
@@ -111,13 +133,16 @@ class MediaDownloader:
             output_path: Optional output directory
             
         Returns:
-            dict with status and file path or error
+            dict with status, platform, file_url and other info
         """
         try:
+            platform = self.detect_platform(url)
+            
             if not self.is_supported(url):
                 return {
                     'success': False,
-                    'error': 'Unsupported platform'
+                    'error': 'Unsupported platform',
+                    'platform': platform
                 }
             
             # Create temp directory if no output path specified
@@ -151,7 +176,8 @@ class MediaDownloader:
                 logger.error(f"yt-dlp error: {result.stderr}")
                 return {
                     'success': False,
-                    'error': 'Download failed'
+                    'error': 'Download failed',
+                    'platform': platform
                 }
             
             # Get file path from output
@@ -160,26 +186,32 @@ class MediaDownloader:
             if not os.path.exists(file_path):
                 return {
                     'success': False,
-                    'error': 'File not found after download'
+                    'error': 'File not found after download',
+                    'platform': platform
                 }
             
             return {
                 'success': True,
                 'file_path': file_path,
-                'filename': os.path.basename(file_path)
+                'file_url': file_path,  # For compatibility with bot.py
+                'filename': os.path.basename(file_path),
+                'platform': platform,
+                'media_type': 'audio'
             }
             
         except subprocess.TimeoutExpired:
             logger.error("Download timeout")
             return {
                 'success': False,
-                'error': 'Download timeout'
+                'error': 'Download timeout',
+                'platform': self.detect_platform(url)
             }
         except Exception as e:
             logger.error(f"Download error: {e}")
             return {
                 'success': False,
-                'error': str(e)
+                'error': str(e),
+                'platform': self.detect_platform(url)
             }
     
     def get_info(self, url: str) -> dict:
@@ -220,7 +252,8 @@ class MediaDownloader:
                 'title': info.get('title', 'Unknown'),
                 'duration': info.get('duration', 0),
                 'thumbnail': info.get('thumbnail', ''),
-                'uploader': info.get('uploader', 'Unknown')
+                'uploader': info.get('uploader', 'Unknown'),
+                'platform': self.detect_platform(url)
             }
             
         except Exception as e:
