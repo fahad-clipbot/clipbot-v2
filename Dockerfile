@@ -2,11 +2,16 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy all files first
 COPY . .
 
-# Install dependencies
-RUN pip install --no-cache-dir python-telegram-bot==20.7 requests==2.31.0
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Run the bot
 CMD ["python", "bot.py"]
