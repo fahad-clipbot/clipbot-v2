@@ -19,6 +19,7 @@ from telegram.ext import (
 )
 from database import Database
 from downloader import MediaDownloader
+from payment import PayPalHandler
 from translations import get_text, get_user_language
 
 # Setup logging
@@ -130,6 +131,16 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Get user's preferred language
     lang = db.get_user_language(user.id)
+    
+    # Check for payment callback
+    if context.args:
+        arg = context.args[0]
+        if arg == 'payment_success':
+            await handle_payment_success(update, context)
+            return
+        elif arg == 'payment_cancel':
+            await handle_payment_cancel(update, context)
+            return
     
     welcome_text = (
         get_text(lang, 'welcome_title', name=user.first_name) + '\n' +
@@ -366,10 +377,27 @@ async def handle_subscription_selection(update: Update, context: ContextTypes.DE
     
     payment_text += '\n' + get_text(lang, 'subscribe_payment_method')
     
-    keyboard = [
-        [InlineKeyboardButton(get_text(lang, 'btn_back'), callback_data="subscribe")],
-        [InlineKeyboardButton(get_text(lang, 'btn_home'), callback_data="start")]
-    ]
+    # Create PayPal payment
+    paypal = PayPalHandler()
+    payment_result = paypal.create_payment(tier, user.id, user.username)
+    
+    keyboard = []
+    
+    if payment_result['success']:
+        # Add PayPal payment button
+        keyboard.append([InlineKeyboardButton(
+            "💳 " + get_text(lang, 'btn_pay_paypal'),
+            url=payment_result['payment_url']
+        )])
+        # Store order_id for verification
+        context.user_data['pending_order_id'] = payment_result['order_id']
+        context.user_data['pending_tier'] = tier
+    else:
+        payment_text += '\n\n⚠️ ' + get_text(lang, 'error_payment_failed')
+    
+    keyboard.append([InlineKeyboardButton(get_text(lang, 'btn_back'), callback_data="subscribe")])
+    keyboard.append([InlineKeyboardButton(get_text(lang, 'btn_home'), callback_data="start")])
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.message.edit_text(
@@ -377,6 +405,79 @@ async def handle_subscription_selection(update: Update, context: ContextTypes.DE
         parse_mode='Markdown',
         reply_markup=reply_markup
     )
+
+async def handle_payment_success(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle successful payment callback"""
+    user = update.effective_user
+    lang = db.get_user_language(user.id)
+    
+    # Check if there's a pending order
+    if 'pending_order_id' not in context.user_data:
+        await update.message.reply_text(get_text(lang, 'error_no_pending_payment'))
+        return
+    
+    order_id = context.user_data['pending_order_id']
+    tier = context.user_data['pending_tier']
+    
+    # Verify and capture payment
+    paypal = PayPalHandler()
+    capture_result = paypal.capture_payment(order_id)
+    
+    if capture_result['success']:
+        # Activate subscription
+        expiry_date = datetime.now() + timedelta(days=30)
+        db.update_subscription(
+            user_id=user.id,
+            tier=tier,
+            expiry_date=expiry_date
+        )
+        
+        tier_name = get_text(lang, f'tier_{tier}')
+        success_text = get_text(lang, 'payment_success', tier=tier_name)
+        
+        keyboard = [
+            [InlineKeyboardButton(get_text(lang, 'btn_status'), callback_data="status")],
+            [InlineKeyboardButton(get_text(lang, 'btn_home'), callback_data="start")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            success_text,
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+        
+        # Clear pending data
+        context.user_data.pop('pending_order_id', None)
+        context.user_data.pop('pending_tier', None)
+        
+        # Log admin notification
+        logger.info(f"Payment successful: User {user.id} subscribed to {tier}")
+    else:
+        await update.message.reply_text(get_text(lang, 'error_payment_verification'))
+
+async def handle_payment_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle cancelled payment"""
+    user = update.effective_user
+    lang = db.get_user_language(user.id)
+    
+    cancel_text = get_text(lang, 'payment_cancelled')
+    
+    keyboard = [
+        [InlineKeyboardButton(get_text(lang, 'btn_subscribe'), callback_data="subscribe")],
+        [InlineKeyboardButton(get_text(lang, 'btn_home'), callback_data="start")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        cancel_text,
+        parse_mode='Markdown',
+        reply_markup=reply_markup
+    )
+    
+    # Clear pending data
+    context.user_data.pop('pending_order_id', None)
+    context.user_data.pop('pending_tier', None)
 
 # Download handler
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -648,9 +749,16 @@ def main():
     """Start the bot"""
     # Get bot token from environment
     token = os.getenv('BOT_TOKEN')
+    
+    # Debug: Print all environment variables (without values)
+    logger.info(f"Environment variables available: {', '.join(os.environ.keys())}")
+    
     if not token:
         logger.error("BOT_TOKEN not found in environment variables!")
-        return
+        logger.error("Please set BOT_TOKEN in Railway Variables")
+        raise ValueError("BOT_TOKEN is required but not set")
+    
+    logger.info("BOT_TOKEN found successfully!")
     
     # Create application
     application = Application.builder().token(token).build()
