@@ -108,14 +108,13 @@ TRANSLATIONS = {
         'subscribe_payment_title': '💳 **الدفع - {tier}**',
         'subscribe_price': 'السعر: ${price}/شهر',
         'subscribe_features': '**المميزات:**',
-        'subscribe_payment_method': '''
-**طريقة الدفع:**
-سيتم إضافة PayPal قريباً!
-
-في الوقت الحالي، يمكنك التواصل مع الإدارة للاشتراك.
-
-شكراً لاهتمامك! 💙
-''',
+        'subscribe_payment_method': '\n**طريقة الدفع:**',
+        'btn_pay_paypal': 'ادفع عبر PayPal',
+        'error_payment_failed': 'فشل في إنشاء رابط الدفع. حاول مرة أخرى.',
+        'error_no_pending_payment': 'لا يوجد دفع معلق.',
+        'error_payment_verification': '❌ فشل التحقق من الدفع. يرجى التواصل مع الدعم.',
+        'payment_success': '🎉 **تم الدفع بنجاح!**\n\nتم تفعيل اشتراك {tier} لمدة 30 يوماً.\n\nاستمتع بالخدمة! 💙',
+        'payment_cancelled': '❌ **تم إلغاء الدفع**\n\nيمكنك المحاولة مرة أخرى عندما تكون جاهزاً.',
         
         # Language
         'language_title': '🌍 **اختر اللغة / Choose Language**',
@@ -267,14 +266,13 @@ Need help? Contact support! 💬
         'subscribe_payment_title': '💳 **Payment - {tier}**',
         'subscribe_price': 'Price: ${price}/month',
         'subscribe_features': '**Features:**',
-        'subscribe_payment_method': '''
-**Payment Method:**
-PayPal will be added soon!
-
-For now, you can contact admin to subscribe.
-
-Thank you for your interest! 💙
-''',
+        'subscribe_payment_method': '\n**Payment Method:**',
+        'btn_pay_paypal': 'Pay with PayPal',
+        'error_payment_failed': 'Failed to create payment link. Try again.',
+        'error_no_pending_payment': 'No pending payment found.',
+        'error_payment_verification': '❌ Payment verification failed. Please contact support.',
+        'payment_success': '🎉 **Payment Successful!**\n\nYour {tier} subscription has been activated for 30 days.\n\nEnjoy the service! 💙',
+        'payment_cancelled': '❌ **Payment Cancelled**\n\nYou can try again when you\'re ready.',
         
         # Language
         'language_title': '🌍 **Choose Language / اختر اللغة**',
