@@ -1,2 +1,6 @@
 python-telegram-bot==20.7
 requests==2.31.0
+yt-dlp==2024.11.4
+openai==0.28.1
+# Note: requests library already included above, used for PayPal API integration
+# Note: openai library used for AI-powered smart responses and URL detection
