@@ -345,3 +345,105 @@ class Database:
             'today_downloads': today_downloads,
             'today_active_users': today_active_users
         }
+
+    # Admin functions
+    def get_admin_stats(self) -> Dict:
+        """Get admin dashboard statistics"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Total users
+        cursor.execute("SELECT COUNT(*) as count FROM users")
+        total_users = cursor.fetchone()['count']
+        
+        # Active subscriptions
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM subscriptions 
+            WHERE status = 'active' AND end_date > CURRENT_TIMESTAMP
+        """)
+        active_subscriptions = cursor.fetchone()['count']
+        
+        # Downloads today
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM downloads 
+            WHERE date(download_date) = date('now') AND success = 1
+        """)
+        downloads_today = cursor.fetchone()['count']
+        
+        # Downloads this week
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM downloads 
+            WHERE download_date >= date('now', '-7 days') AND success = 1
+        """)
+        downloads_week = cursor.fetchone()['count']
+        
+        # Downloads this month
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM downloads 
+            WHERE download_date >= date('now', '-30 days') AND success = 1
+        """)
+        downloads_month = cursor.fetchone()['count']
+        
+        # Total downloads
+        cursor.execute("SELECT COUNT(*) as count FROM downloads WHERE success = 1")
+        total_downloads = cursor.fetchone()['count']
+        
+        conn.close()
+        
+        return {
+            'total_users': total_users,
+            'active_subscriptions': active_subscriptions,
+            'downloads_today': downloads_today,
+            'downloads_week': downloads_week,
+            'downloads_month': downloads_month,
+            'total_downloads': total_downloads
+        }
+    
+    def get_active_subscriptions(self) -> List[Dict]:
+        """Get all active subscriptions with user info"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT s.*, u.username, u.first_name, u.last_name
+            FROM subscriptions s
+            JOIN users u ON s.user_id = u.user_id
+            WHERE s.status = 'active' AND s.end_date > CURRENT_TIMESTAMP
+            ORDER BY s.end_date DESC
+        """)
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        result = []
+        for row in rows:
+            sub_dict = dict(row)
+            # Convert timestamp strings to datetime objects if needed
+            if 'end_date' in sub_dict and sub_dict['end_date']:
+                try:
+                    sub_dict['expiry_date'] = datetime.fromisoformat(sub_dict['end_date'])
+                except:
+                    pass
+            result.append(sub_dict)
+        
+        return result
+    
+    def get_download_stats(self, days: int = 7) -> List[Dict]:
+        """Get download statistics for the last N days"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT 
+                date(download_date) as date,
+                COUNT(*) as count
+            FROM downloads
+            WHERE download_date >= date('now', ? || ' days') AND success = 1
+            GROUP BY date(download_date)
+            ORDER BY date DESC
+        """, (f'-{days}',))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return [dict(row) for row in rows]
