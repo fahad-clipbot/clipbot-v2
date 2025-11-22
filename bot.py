@@ -22,6 +22,7 @@ from downloader import MediaDownloader
 # TEMPORARY: Removed payment import until payment.py is uploaded
 # from payment import PayPalHandler
 from translations import get_text, get_user_language
+from ai_helper import ai_helper
 
 # Setup logging
 logging.basicConfig(
@@ -65,7 +66,7 @@ SUBSCRIPTION_TIERS = {
 # Helper functions
 def get_user_tier(user_id: int) -> str:
     """Get user's subscription tier"""
-    subscription = db.get_user_subscription(user_id)
+    subscription = db.get_active_subscription(user_id)
     if not subscription:
         return 'free'
     
@@ -201,7 +202,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     remaining = limit - downloads_today
     
     # Get subscription info
-    subscription = db.get_user_subscription(user.id)
+    subscription = db.get_active_subscription(user.id)
     if subscription and subscription['expiry_date']:
         expiry_date = subscription['expiry_date'].strftime('%Y-%m-%d')
         status = get_text(lang, 'status_active')
@@ -323,7 +324,7 @@ async def handle_language_selection(update: Update, context: ContextTypes.DEFAUL
     lang_code = query.data.replace('lang_', '')
     
     # Update user language
-    db.update_user_language(user.id, lang_code)
+    db.set_user_language(user.id, lang_code)
     
     # Get confirmation message
     confirmation = get_text(lang_code, 'language_changed')
@@ -372,14 +373,53 @@ async def handle_subscription_selection(update: Update, context: ContextTypes.DE
 
 # Download handler
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle incoming messages with URLs"""
+    """Handle incoming messages with AI-powered understanding"""
     user = update.effective_user
     lang = db.get_user_language(user.id)
     message_text = update.message.text
     
-    # Check if message contains URL
-    if not ('http://' in message_text or 'https://' in message_text):
+    # Use AI to analyze message
+    analysis = ai_helper.analyze_message(message_text, lang)
+    
+    # Handle different intents
+    if analysis['intent'] == 'greeting':
+        await update.message.reply_text(get_text(lang, 'welcome_title', name=user.first_name))
+        return
+    
+    elif analysis['intent'] == 'help':
+        await help_command(update, context)
+        return
+    
+    elif analysis['intent'] == 'question':
+        # Try to generate smart response
+        tier = get_user_tier(user.id)
+        downloads_today = db.get_user_downloads_today(user.id)
+        limit = SUBSCRIPTION_TIERS[tier]['daily_limit']
+        
+        context_info = {
+            'user_tier': tier,
+            'downloads_today': downloads_today,
+            'limit': limit
+        }
+        
+        smart_response = ai_helper.generate_smart_response(message_text, context_info, lang)
+        if smart_response:
+            await update.message.reply_text(smart_response)
+        else:
+            await update.message.reply_text(get_text(lang, 'error_invalid_url'))
+        return
+    
+    # Check if message contains URL (using AI extraction)
+    urls = analysis['urls']
+    if not urls:
         await update.message.reply_text(get_text(lang, 'error_invalid_url'))
+        return
+    
+    # Validate URL
+    url = urls[0]  # Use first URL found
+    validation = ai_helper.validate_url(url)
+    if not validation['valid']:
+        await update.message.reply_text(validation['message'])
         return
     
     # Check download limit
@@ -397,8 +437,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     try:
-        # Check if user wants audio
-        want_audio = 'audio' in message_text.lower() or 'صوت' in message_text.lower()
+        # Check if user wants audio (using AI detection)
+        want_audio = analysis['wants_audio']
         
         # Download media
         result = downloader.download(message_text, audio_only=want_audio)
@@ -408,7 +448,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             media_type = result['media_type']
             
             # Record download
-            db.record_download(
+            db.add_download(
                 user_id=user.id,
                 url=message_text,
                 platform=platform,
@@ -443,22 +483,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                        current=i, total=count, platform=platform)
                     )
             
-            # Send success message
-            remaining = SUBSCRIPTION_TIERS[get_user_tier(user.id)]['daily_limit'] - db.get_user_downloads_today(user.id)
-            await processing_msg.edit_text(
-                get_text(lang, 'download_success', remaining=remaining)
-            )
+            # Send success message with smart suggestions
+            tier = get_user_tier(user.id)
+            remaining = SUBSCRIPTION_TIERS[tier]['daily_limit'] - db.get_user_downloads_today(user.id)
+            success_msg = get_text(lang, 'download_success', remaining=remaining)
+            
+            # Add smart subscription suggestion if applicable
+            suggestion = ai_helper.suggest_subscription(db.get_user_downloads_today(user.id), 7, lang)
+            if suggestion:
+                success_msg += f"\n\n{suggestion}"
+            
+            await processing_msg.edit_text(success_msg)
             
         else:
-            await processing_msg.edit_text(
-                get_text(lang, 'error_download_failed', error=result.get('error', 'Unknown error'))
-            )
+            # Use AI to generate user-friendly error message
+            error_msg = ai_helper.get_smart_error_message(result.get('error', 'Unknown error'), lang)
+            await processing_msg.edit_text(error_msg)
     
     except Exception as e:
         logger.error(f"Error handling download: {e}")
-        await processing_msg.edit_text(
-            get_text(lang, 'error_download_failed', error=str(e))
-        )
+        # Use AI to generate user-friendly error message
+        error_msg = ai_helper.get_smart_error_message(str(e), lang)
+        await processing_msg.edit_text(error_msg)
 
 # Admin commands
 async def admin_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
