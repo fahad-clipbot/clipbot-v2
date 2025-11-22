@@ -1,679 +1,525 @@
-"""
-ClipBot V2 - Clean Telegram Bot (Temporary version without PayPal)
-Downloads videos, images, and audio from YouTube, TikTok, Instagram
-With subscription system and admin dashboard
-Supports Arabic and English
-"""
+# bot_5.py
+# ClipBot V2 (Bot 5) — Telegram bot with AI replies, internal storage, subscriptions, and download limits
 
 import os
 import logging
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from typing import Dict, Any, Optional, List
+
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
+    ContextTypes,
     filters,
-    ContextTypes
 )
-from database import Database
+
+# Project modules (must exist in your repo)
 from downloader import MediaDownloader
-# TEMPORARY: Removed payment import until payment.py is uploaded
-# from payment import PayPalHandler
-from translations import get_text, get_user_language
+from translations import get_text, get_user_language as detect_lang_code
 from ai_helper import ai_helper
 
-# Setup logging
+# -----------------------------------------------------------------------------
+# Logging
+# -----------------------------------------------------------------------------
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("ClipBotV2-Bot5")
 
-# Initialize database and downloader
+# -----------------------------------------------------------------------------
+# Internal storage (in-memory)
+# -----------------------------------------------------------------------------
+class Database:
+    def __init__(self):
+        # users: user_id -> dict
+        self.users: Dict[int, Dict[str, Any]] = {}
+        # downloads history (per-day count)
+        self.downloads: Dict[int, List[datetime]] = {}
+        # subscriptions: user_id -> dict(tier, expiry_date, status)
+        self.subscriptions: Dict[int, Dict[str, Any]] = {}
+
+    # Users
+    def add_user(self, user_id: int, language_code: str, first_name: str = "", last_name: str = "", username: Optional[str] = None):
+        if user_id not in self.users:
+            self.users[user_id] = {
+                "user_id": user_id,
+                "language_code": language_code,
+                "first_name": first_name or "",
+                "last_name": last_name or "",
+                "username": username or "",
+                "tier": "free",
+                "is_admin": False,
+            }
+            logger.info(f"New user added: {user_id}")
+        else:
+            # update basic fields
+            self.users[user_id].update({
+                "language_code": language_code,
+                "first_name": first_name or self.users[user_id].get("first_name", ""),
+                "last_name": last_name or self.users[user_id].get("last_name", ""),
+                "username": username or self.users[user_id].get("username", ""),
+            })
+
+    def get_user(self, user_id: int) -> Optional[Dict[str, Any]]:
+        return self.users.get(user_id)
+
+    def set_user_language(self, user_id: int, lang_code: str):
+        if user_id in self.users:
+            self.users[user_id]["language_code"] = lang_code
+
+    def get_user_language(self, user_id: int) -> str:
+        user = self.get_user(user_id)
+        return user["language_code"] if user and user.get("language_code") else "ar"
+
+    # Downloads
+    def add_download(self, user_id: int):
+        now = datetime.now()
+        self.downloads.setdefault(user_id, []).append(now)
+
+    def get_user_downloads_today(self, user_id: int) -> int:
+        today = datetime.now().date()
+        return sum(1 for t in self.downloads.get(user_id, []) if t.date() == today)
+
+    # Subscriptions
+    def set_subscription(self, user_id: int, tier: str, days: int = 30):
+        expiry = datetime.now() + timedelta(days=days)
+        self.subscriptions[user_id] = {
+            "tier": tier,
+            "expiry_date": expiry,
+            "status": "active",
+            "created_at": datetime.now(),
+        }
+        # reflect tier on user record
+        if user_id in self.users:
+            self.users[user_id]["tier"] = tier
+
+    def get_active_subscription(self, user_id: int) -> Optional[Dict[str, Any]]:
+        sub = self.subscriptions.get(user_id)
+        if not sub:
+            return None
+        if sub.get("expiry_date") and sub["expiry_date"] < datetime.now():
+            # auto mark inactive if expired
+            sub["status"] = "expired"
+            return None
+        if sub.get("status") != "active":
+            return None
+        return sub
+
+    # Admin helpers
+    def get_all_users(self) -> List[Dict[str, Any]]:
+        return list(self.users.values())
+
+    def get_admin_stats(self) -> Dict[str, int]:
+        total_users = len(self.users)
+        active_subscriptions = sum(1 for s in self.subscriptions.values() if s.get("status") == "active")
+        downloads_today = sum(self.get_user_downloads_today(u) for u in self.users)
+        # Simple weekly/monthly approximations
+        downloads_week = sum(1 for times in self.downloads.values() for t in times if (datetime.now() - t).days < 7)
+        downloads_month = sum(1 for times in self.downloads.values() for t in times if (datetime.now() - t).days < 30)
+        total_downloads = sum(len(times) for times in self.downloads.values())
+        return {
+            "total_users": total_users,
+            "active_subscriptions": active_subscriptions,
+            "downloads_today": downloads_today,
+            "downloads_week": downloads_week,
+            "downloads_month": downloads_month,
+            "total_downloads": total_downloads,
+        }
+
 db = Database()
 downloader = MediaDownloader()
 
+# -----------------------------------------------------------------------------
 # Subscription tiers
+# -----------------------------------------------------------------------------
 SUBSCRIPTION_TIERS = {
-    'free': {
-        'name': 'Free',
-        'price': 0,
-        'daily_limit': 5,
-        'quality': 'standard'
+    "free": {
+        "name": "Free",
+        "price": 0,
+        "daily_limit": 3,
+        "quality": "standard",
+        "priority": "normal",
+        "support": "community",
+        "features": ["Basic quality", "Up to 3 downloads/day"],
     },
-    'basic': {
-        'name': 'Basic',
-        'price': 5,
-        'daily_limit': 20,
-        'quality': 'high'
+    "basic": {
+        "name": "Basic",
+        "price": 5,
+        "daily_limit": 10,
+        "quality": "high",
+        "priority": "higher",
+        "support": "email",
+        "features": ["High quality", "Up to 10 downloads/day", "Priority queue"],
     },
-    'professional': {
-        'name': 'Professional',
-        'price': 10,
-        'daily_limit': 50,
-        'quality': 'very_high'
+    "professional": {
+        "name": "Professional",
+        "price": 10,
+        "daily_limit": 20,
+        "quality": "very_high",
+        "priority": "high",
+        "support": "chat",
+        "features": ["Very high quality", "Up to 20 downloads/day", "Priority support"],
     },
-    'advanced': {
-        'name': 'Advanced',
-        'price': 15,
-        'daily_limit': 100,
-        'quality': 'best'
-    }
+    "advanced": {
+        "name": "Advanced",
+        "price": 15,
+        "daily_limit": 30,
+        "quality": "best",
+        "priority": "highest",
+        "support": "dedicated",
+        "features": ["Best quality", "Up to 30 downloads/day", "Dedicated support"],
+    },
 }
 
-# Helper functions
+# -----------------------------------------------------------------------------
+# Helpers: tier, limits, features
+# -----------------------------------------------------------------------------
 def get_user_tier(user_id: int) -> str:
-    """Get user's subscription tier"""
-    subscription = db.get_active_subscription(user_id)
-    if not subscription:
-        return 'free'
-    
-    # Check if subscription is expired
-    if subscription['expiry_date'] and subscription['expiry_date'] < datetime.now():
-        return 'free'
-    
-    return subscription['tier']
+    sub = db.get_active_subscription(user_id)
+    if not sub:
+        # fallback to user record tier or free
+        user = db.get_user(user_id)
+        tier = user["tier"] if user and user.get("tier") in SUBSCRIPTION_TIERS else "free"
+        return tier
+    # check expiry just in case
+    if sub.get("expiry_date") and sub["expiry_date"] < datetime.now():
+        return "free"
+    return sub["tier"]
 
 def check_download_limit(user_id: int) -> bool:
-    """Check if user has reached daily download limit"""
     tier = get_user_tier(user_id)
-    limit = SUBSCRIPTION_TIERS[tier]['daily_limit']
-    downloads_today = db.get_user_downloads_today(user_id)
-    
-    return downloads_today < limit
+    if tier not in SUBSCRIPTION_TIERS:
+        tier = "free"
+    limit = SUBSCRIPTION_TIERS[tier]["daily_limit"]
+    used = db.get_user_downloads_today(user_id)
+    logger.info(f"User {user_id} tier={tier} used={used}/{limit}")
+    return used < limit
 
-def get_tier_features(tier: str, lang: str) -> list:
-    """Get list of features for a tier"""
-    tier_info = SUBSCRIPTION_TIERS[tier]
-    features = []
-    
-    # Daily limit
-    features.append(
-        get_text(lang, 'feature_daily_limit', limit=tier_info['daily_limit'])
-    )
-    
-    # Quality
-    quality_key = f"feature_quality_{tier_info['quality']}"
-    features.append(get_text(lang, quality_key))
-    
-    # All platforms
-    features.append(get_text(lang, 'feature_all_platforms'))
-    
-    # Additional features for paid tiers
-    if tier == 'professional':
-        features.append(get_text(lang, 'feature_priority'))
-    elif tier == 'advanced':
-        features.append(get_text(lang, 'feature_instant'))
-        features.append(get_text(lang, 'feature_support'))
-    
-    return features
+def get_tier_features_text(tier_key: str, lang: str) -> str:
+    info = SUBSCRIPTION_TIERS[tier_key]
+    # If you have translation keys, map them; else use raw features
+    lines = []
+    lines.append(f"- {get_text(lang, 'feature_daily_limit')}: {info['daily_limit']}")
+    lines.append(f"- {get_text(lang, 'feature_quality')}: {info['quality']}")
+    lines.append(f"- {get_text(lang, 'feature_priority')}: {info['priority']}")
+    lines.append(f"- {get_text(lang, 'feature_support')}: {info['support']}")
+    # Extra features list
+    for f in info.get("features", []):
+        lines.append(f"- {f}")
+    return "\n".join(lines)
 
+# -----------------------------------------------------------------------------
 # Command handlers
+# -----------------------------------------------------------------------------
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start command"""
     user = update.effective_user
-    
-    # Detect user language
-    user_lang = get_user_language(user.language_code)
-    
-    # Add user to database
+    # detect language code from Telegram; convert to our supported key
+    lang_code = detect_lang_code(user.language_code)
     db.add_user(
         user_id=user.id,
-        username=user.username,
+        language_code=lang_code,
         first_name=user.first_name,
         last_name=user.last_name,
-        language_code=user.language_code,
-        preferred_language=user_lang
+        username=user.username,
     )
-    
-    # Get user's preferred language
     lang = db.get_user_language(user.id)
-    
+
     welcome_text = (
-        get_text(lang, 'welcome_title', name=user.first_name) + '\n' +
-        get_text(lang, 'welcome_intro') + '\n' +
-        get_text(lang, 'welcome_how_to') + '\n' +
-        get_text(lang, 'welcome_commands') + '\n' +
-        get_text(lang, 'welcome_types')
+        get_text(lang, "welcome_title", name=user.first_name) + "\n\n" +
+        get_text(lang, "welcome_note") + "\n\n" +
+        get_text(lang, "welcome_types")
     )
-    
     keyboard = [
-        [InlineKeyboardButton(get_text(lang, 'btn_help'), callback_data="help")],
-        [InlineKeyboardButton(get_text(lang, 'btn_status'), callback_data="status")],
-        [InlineKeyboardButton(get_text(lang, 'btn_subscribe'), callback_data="subscribe")],
-        [InlineKeyboardButton(get_text(lang, 'btn_language'), callback_data="language")]
+        [InlineKeyboardButton(get_text(lang, "btn_help"), callback_data="help")],
+        [InlineKeyboardButton(get_text(lang, "btn_status"), callback_data="status")],
+        [InlineKeyboardButton(get_text(lang, "btn_language"), callback_data="language")],
+        [InlineKeyboardButton(get_text(lang, "btn_subscribe"), callback_data="subscribe")],
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        welcome_text,
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
+    await update.message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /help command"""
     user = update.effective_user
     lang = db.get_user_language(user.id)
-    
-    help_text = (
-        get_text(lang, 'help_title') + '\n\n' +
-        get_text(lang, 'help_platforms') + '\n' +
-        get_text(lang, 'help_video') + '\n' +
-        get_text(lang, 'help_images') + '\n' +
-        get_text(lang, 'help_audio') + '\n' +
-        get_text(lang, 'help_commands') + '\n' +
-        get_text(lang, 'help_notes')
+    text = (
+        get_text(lang, "help_title") + "\n\n" +
+        get_text(lang, "help_video") + "\n" +
+        get_text(lang, "help_images") + "\n" +
+        get_text(lang, "help_status") + "\n" +
+        get_text(lang, "help_command")
     )
-    
-    keyboard = [
-        [InlineKeyboardButton(get_text(lang, 'btn_home'), callback_data="start")],
-        [InlineKeyboardButton(get_text(lang, 'btn_status'), callback_data="status")],
-        [InlineKeyboardButton(get_text(lang, 'btn_subscribe'), callback_data="subscribe")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    # Check if it's a callback query or command
-    if update.callback_query:
-        await update.callback_query.message.edit_text(
-            help_text,
-            parse_mode='Markdown',
-            reply_markup=reply_markup
-        )
-    else:
-        await update.message.reply_text(
-            help_text,
-            parse_mode='Markdown',
-            reply_markup=reply_markup
-        )
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /status command"""
     user = update.effective_user
     lang = db.get_user_language(user.id)
-    
-    # Get user info
-    tier = get_user_tier(user.id)
-    tier_name = get_text(lang, f'tier_{tier}')
-    downloads_today = db.get_user_downloads_today(user.id)
-    limit = SUBSCRIPTION_TIERS[tier]['daily_limit']
-    remaining = limit - downloads_today
-    
-    # Get subscription info
-    subscription = db.get_active_subscription(user.id)
-    if subscription and subscription['expiry_date']:
-        expiry_date = subscription['expiry_date'].strftime('%Y-%m-%d')
-        status = get_text(lang, 'status_active')
-    else:
-        expiry_date = '-'
-        status = get_text(lang, 'status_inactive')
-    
-    status_text = (
-        get_text(lang, 'status_title') + '\n\n' +
-        get_text(lang, 'status_tier', tier=tier_name) + '\n' +
-        get_text(lang, 'status_downloads', used=downloads_today, limit=limit) + '\n' +
-        get_text(lang, 'status_remaining', remaining=remaining) + '\n' +
-        get_text(lang, 'status_expiry', date=expiry_date) + '\n' +
-        get_text(lang, 'status_status', status=status)
-    )
-    
-    if tier == 'free':
-        status_text += get_text(lang, 'status_upgrade')
-    
-    keyboard = [
-        [InlineKeyboardButton(get_text(lang, 'btn_home'), callback_data="start")],
-        [InlineKeyboardButton(get_text(lang, 'btn_subscribe'), callback_data="subscribe")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    # Check if it's a callback query or command
-    if update.callback_query:
-        await update.callback_query.message.edit_text(
-            status_text,
-            parse_mode='Markdown',
-            reply_markup=reply_markup
-        )
-    else:
-        await update.message.reply_text(
-            status_text,
-            parse_mode='Markdown',
-            reply_markup=reply_markup
-        )
 
-async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /subscribe command"""
-    user = update.effective_user
-    lang = db.get_user_language(user.id)
-    
-    subscribe_text = get_text(lang, 'subscribe_title') + '\n'
-    
-    keyboard = []
-    
-    for tier_key, tier_info in SUBSCRIPTION_TIERS.items():
-        if tier_key == 'free':
-            continue
-        
-        tier_name = get_text(lang, f'tier_{tier_key}')
-        tier_text = f"{tier_name} - ${tier_info['price']}{get_text(lang, 'subscribe_month')}"
-        keyboard.append([InlineKeyboardButton(tier_text, callback_data=f"sub_{tier_key}")])
-    
-    keyboard.append([InlineKeyboardButton(get_text(lang, 'btn_home'), callback_data="start")])
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    # Add tier details
-    for tier_key, tier_info in SUBSCRIPTION_TIERS.items():
-        if tier_key == 'free':
-            continue
-        tier_name = get_text(lang, f'tier_{tier_key}')
-        subscribe_text += f"\n**{tier_name} - ${tier_info['price']}{get_text(lang, 'subscribe_month')}**\n"
-        features = get_tier_features(tier_key, lang)
-        for feature in features:
-            subscribe_text += f"• {feature}\n"
-    
-    # Check if it's a callback query or command
-    if update.callback_query:
-        await update.callback_query.message.edit_text(
-            subscribe_text,
-            parse_mode='Markdown',
-            reply_markup=reply_markup
+    tier = get_user_tier(user.id)
+    downloads_today = db.get_user_downloads_today(user.id)
+    limit = SUBSCRIPTION_TIERS.get(tier, SUBSCRIPTION_TIERS["free"])["daily_limit"]
+    remaining = max(0, limit - downloads_today)
+
+    sub = db.get_active_subscription(user.id)
+    if sub:
+        expiry_text = sub["expiry_date"].strftime("%Y-%m-%d %H:%M")
+        status_text = (
+            get_text(lang, "status_active") + "\n" +
+            f"{get_text(lang, 'status_tier_info')}: {tier}\n" +
+            f"{get_text(lang, 'status_expiry_info')}: {expiry_text}\n" +
+            f"{get_text(lang, 'status_downloads_info')}: {downloads_today}\n" +
+            f"{get_text(lang, 'status_limit_info')}: {limit}\n" +
+            f"{get_text(lang, 'status_remaining_info')}: {remaining}"
         )
     else:
-        await update.message.reply_text(
-            subscribe_text,
-            parse_mode='Markdown',
-            reply_markup=reply_markup
+        status_text = (
+            get_text(lang, "status_inactive") + "\n\n" +
+            f"{get_text(lang, 'status_tier_info')}: {tier}\n" +
+            f"{get_text(lang, 'status_downloads_info')}: {downloads_today}\n" +
+            f"{get_text(lang, 'status_limit_info')}: {limit}\n" +
+            f"{get_text(lang, 'status_remaining_info')}: {remaining}"
         )
+    await update.message.reply_text(status_text, parse_mode="Markdown")
 
 async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /language command"""
     user = update.effective_user
     lang = db.get_user_language(user.id)
-    
-    language_text = get_text(lang, 'language_title')
-    
+    text = get_text(lang, "language_title")
     keyboard = [
-        [InlineKeyboardButton(get_text(lang, 'btn_arabic'), callback_data="lang_ar")],
-        [InlineKeyboardButton(get_text(lang, 'btn_english'), callback_data="lang_en")],
-        [InlineKeyboardButton(get_text(lang, 'btn_home'), callback_data="start")]
+        [InlineKeyboardButton(get_text(lang, "btn_lang_ar"), callback_data="lang_ar")],
+        [InlineKeyboardButton(get_text(lang, "btn_lang_en"), callback_data="lang_en")],
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    # Check if it's a callback query or command
-    if update.callback_query:
-        await update.callback_query.message.edit_text(
-            language_text,
-            parse_mode='Markdown',
-            reply_markup=reply_markup
-        )
-    else:
-        await update.message.reply_text(
-            language_text,
-            parse_mode='Markdown',
-            reply_markup=reply_markup
-        )
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
-# Callback handlers
-async def handle_language_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle language selection"""
-    query = update.callback_query
-    await query.answer()
-    
-    user = update.effective_user
-    lang_code = query.data.replace('lang_', '')
-    
-    # Update user language
-    db.set_user_language(user.id, lang_code)
-    
-    # Get confirmation message
-    confirmation = get_text(lang_code, 'language_changed')
-    
-    await query.message.reply_text(confirmation)
-    
-    # Return to home
-    await start_command(update, context)
-
-async def handle_subscription_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle subscription tier selection"""
-    query = update.callback_query
-    await query.answer()
-    
+async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     lang = db.get_user_language(user.id)
-    
-    tier = query.data.replace('sub_', '')
-    tier_info = SUBSCRIPTION_TIERS[tier]
-    tier_name = get_text(lang, f'tier_{tier}')
-    
-    payment_text = (
-        get_text(lang, 'subscribe_payment_title', tier=tier_name) + '\n\n' +
-        get_text(lang, 'subscribe_price', price=tier_info['price']) + '\n\n' +
-        get_text(lang, 'subscribe_features') + '\n'
-    )
-    
-    features = get_tier_features(tier, lang)
-    for feature in features:
-        payment_text += f"• {feature}\n"
-    
-    # TEMPORARY: PayPal integration will be added soon
-    payment_text += '\n\n' + '⏳ **نظام الدفع عبر PayPal سيتم إضافته قريباً!**\n\nفي الوقت الحالي، يمكنك التواصل مع الإدارة للاشتراك.'
-    
-    keyboard = [
-        [InlineKeyboardButton(get_text(lang, 'btn_back'), callback_data="subscribe")],
-        [InlineKeyboardButton(get_text(lang, 'btn_home'), callback_data="start")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.message.edit_text(
-        payment_text,
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
 
-# Download handler
+    text = get_text(lang, "subscribe_title") + "\n\n"
+    keyboard = []
+    for tier_key, info in SUBSCRIPTION_TIERS.items():
+        if tier_key == "free":
+            continue
+        tier_name = info["name"]
+        price = info["price"]
+        keyboard.append([InlineKeyboardButton(f"{tier_name} - ${price}", callback_data=f"sub_{tier_key}")])
+
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+# -----------------------------------------------------------------------------
+# Callback query handler
+# -----------------------------------------------------------------------------
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = update.effective_user
+    lang = db.get_user_language(user.id)
+    data = query.data
+
+    try:
+        if data == "help":
+            await query.answer()
+            await help_command(update, context)
+
+        elif data == "status":
+            await query.answer()
+            await status_command(update, context)
+
+        elif data == "language":
+            await query.answer()
+            # Show language options
+            text = get_text(lang, "language_title")
+            keyboard = [
+                [InlineKeyboardButton(get_text(lang, "btn_lang_ar"), callback_data="lang_ar")],
+                [InlineKeyboardButton(get_text(lang, "btn_lang_en"), callback_data="lang_en")],
+            ]
+            await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+        elif data.startswith("lang_"):
+            await query.answer()
+            new_lang = data.replace("lang_", "")
+            db.set_user_language(user.id, new_lang)
+            confirmation = get_text(new_lang, "language_changed")
+            await query.message.edit_text(confirmation, parse_mode="Markdown")
+
+        elif data == "subscribe":
+            await query.answer()
+            text = get_text(lang, "subscribe_title") + "\n\n"
+            keyboard = []
+            for tier_key, info in SUBSCRIPTION_TIERS.items():
+                if tier_key == "free":
+                    continue
+                tier_name = info["name"]
+                price = info["price"]
+                keyboard.append([InlineKeyboardButton(f"{tier_name} - ${price}", callback_data=f"sub_{tier_key}")])
+            await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+        elif data.startswith("sub_"):
+            await query.answer()
+            tier = data.replace("sub_", "")
+            info = SUBSCRIPTION_TIERS.get(tier)
+            if not info:
+                await query.message.reply_text(get_text(lang, "error_invalid_tier"))
+                return
+
+            # For now, directly grant subscription (since internal storage, no payment)
+            db.set_subscription(user.id, tier, days=30)
+            features_text = get_tier_features_text(tier, lang)
+            text = (
+                get_text(lang, "subscribe_success", tier=tier, price=info["price"]) + "\n\n" +
+                get_text(lang, "subscribe_payment_tier_features") + "\n" +
+                features_text
+            )
+            await query.message.edit_text(text, parse_mode="Markdown")
+
+        else:
+            await query.answer()
+            await query.message.reply_text(get_text(lang, "error_unknown_action"))
+
+    except Exception as e:
+        logger.exception(f"Error in callback: {e}")
+        await query.message.reply_text(get_text(lang, "error_generic"))
+
+# -----------------------------------------------------------------------------
+# AI-powered message handler + downloads
+# -----------------------------------------------------------------------------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle incoming messages with AI-powered understanding"""
     user = update.effective_user
-    lang = db.get_user_language(user.id)
-    message_text = update.message.text
-    
-    # Use AI to analyze message
-    analysis = ai_helper.analyze_message(message_text, lang)
-    
-    # Handle different intents
-    if analysis['intent'] == 'greeting':
-        await update.message.reply_text(get_text(lang, 'welcome_title', name=user.first_name))
+    message = update.message
+    if not message or not message.text:
         return
-    
-    elif analysis['intent'] == 'help':
+
+    # ensure user exists
+    lang_code = detect_lang_code(user.language_code)
+    db.add_user(user.id, lang_code, user.first_name, user.last_name, user.username)
+    lang = db.get_user_language(user.id)
+
+    text = message.text.strip()
+
+    # AI analysis
+    analysis = {}
+    try:
+        analysis = ai_helper.analyze_message(text, lang)
+    except Exception as e:
+        logger.warning(f"AI analyze failed: {e}")
+        analysis = {"intent": "unknown", "just_urls": []}
+
+    # Handle intents
+    intent = analysis.get("intent")
+    if intent == "greeting":
+        await message.reply_text(get_text(lang, "welcome"))
+        return
+    elif intent == "help":
         await help_command(update, context)
         return
-    
-    elif analysis['intent'] == 'question':
-        # Try to generate smart response
-        tier = get_user_tier(user.id)
-        downloads_today = db.get_user_downloads_today(user.id)
-        limit = SUBSCRIPTION_TIERS[tier]['daily_limit']
-        
-        context_info = {
-            'user_tier': tier,
-            'downloads_today': downloads_today,
-            'limit': limit
-        }
-        
-        smart_response = ai_helper.generate_smart_response(message_text, context_info, lang)
-        if smart_response:
-            await update.message.reply_text(smart_response)
-        else:
-            await update.message.reply_text(get_text(lang, 'error_invalid_url'))
-        return
-    
-    # Check if message contains URL (using AI extraction)
-    urls = analysis['urls']
+    elif intent == "question":
+        try:
+            smart = ai_helper.generate_smart_response(text, lang)
+            if smart:
+                await message.reply_text(smart)
+                # continue to URL handling if any present
+        except Exception as e:
+            logger.warning(f"AI smart reply failed: {e}")
+
+    # Extract URL(s)
+    urls = analysis.get("just_urls") or []
     if not urls:
-        await update.message.reply_text(get_text(lang, 'error_invalid_url'))
+        # No URL: provide helpful hint
+        await message.reply_text(get_text(lang, "hint_send_link"))
         return
-    
-    # Validate URL
-    url = urls[0]  # Use first URL found
-    validation = ai_helper.validate_url(url)
-    if not validation['valid']:
-        await update.message.reply_text(validation['message'])
-        return
-    
-    # Check download limit
+
+    url = urls[0]
+
+    # Check limits
     if not check_download_limit(user.id):
         tier = get_user_tier(user.id)
-        limit = SUBSCRIPTION_TIERS[tier]['daily_limit']
-        await update.message.reply_text(
-            get_text(lang, 'error_limit_reached', limit=limit)
-        )
+        limit = SUBSCRIPTION_TIERS[tier]["daily_limit"]
+        await message.reply_text(get_text(lang, "error_limit", limit=limit))
         return
-    
-    # Send processing message
-    processing_msg = await update.message.reply_text(
-        get_text(lang, 'download_processing')
-    )
-    
+
+    # Processing message
+    processing = await message.reply_text(get_text(lang, "download_processing"))
+
+    # Download via downloader
     try:
-        # Check if user wants audio (using AI detection)
-        want_audio = analysis['wants_audio']
-        
-        # Download media
-        result = downloader.download(message_text, audio_only=want_audio)
-        
-        if result['success']:
-            platform = result['platform']
-            media_type = result['media_type']
-            
-            # Record download
-            db.add_download(
-                user_id=user.id,
-                url=message_text,
-                platform=platform,
-                media_type=media_type
-            )
-            
-            # Send media based on type
-            if media_type == 'audio':
-                await processing_msg.edit_text(get_text(lang, 'download_sending_audio'))
-                await update.message.reply_audio(
-                    audio=open(result['file_path'], 'rb'),
-                    caption=get_text(lang, 'download_from', platform=platform)
-                )
-            
-            elif media_type == 'video':
-                await processing_msg.edit_text(get_text(lang, 'download_sending_video'))
-                await update.message.reply_video(
-                    video=open(result['file_path'], 'rb'),
-                    caption=get_text(lang, 'download_from', platform=platform)
-                )
-            
-            elif media_type == 'images':
-                count = len(result['file_paths'])
-                await processing_msg.edit_text(
-                    get_text(lang, 'download_sending_images', count=count)
-                )
-                
-                for i, file_path in enumerate(result['file_paths'], 1):
-                    await update.message.reply_photo(
-                        photo=open(file_path, 'rb'),
-                        caption=get_text(lang, 'download_image_count', 
-                                       current=i, total=count, platform=platform)
-                    )
-            
-            # Send success message with smart suggestions
-            tier = get_user_tier(user.id)
-            remaining = SUBSCRIPTION_TIERS[tier]['daily_limit'] - db.get_user_downloads_today(user.id)
-            success_msg = get_text(lang, 'download_success', remaining=remaining)
-            
-            # Add smart subscription suggestion if applicable
-            suggestion = ai_helper.suggest_subscription(db.get_user_downloads_today(user.id), 7, lang)
-            if suggestion:
-                success_msg += f"\n\n{suggestion}"
-            
-            await processing_msg.edit_text(success_msg)
-            
+        result = downloader.download(url, audio_only=False)
+        if not result or not result.get("success"):
+            await processing.edit_text(get_text(lang, "error_download_failed"))
+            return
+
+        platform = result.get("platform", "unknown")
+        media_type = result.get("media_type", "video")
+        file_path = result.get("file_path")
+
+        # Record download
+        db.add_download(user.id)
+
+        # Send media
+        if media_type == "audio":
+            await processing.edit_text(get_text(lang, "download_done", platform=platform))
+            await message.reply_audio(audio=open(file_path, "rb"), caption=get_text(lang, "download_from", platform=platform))
+        elif media_type == "video":
+            await processing.edit_text(get_text(lang, "download_done", platform=platform))
+            await message.reply_video(video=open(file_path, "rb"), caption=get_text(lang, "download_from", platform=platform))
+        elif media_type in ("image", "images"):
+            await processing.edit_text(get_text(lang, "download_done", platform=platform))
+            # if downloader returns multiple files, adjust accordingly
+            if isinstance(file_path, list):
+                for i, fp in enumerate(file_path):
+                    await message.reply_photo(photo=open(fp, "rb"), caption=get_text(lang, "download_from", platform=platform) if i == 0 else "")
+            else:
+                await message.reply_photo(photo=open(file_path, "rb"), caption=get_text(lang, "download_from", platform=platform))
         else:
-            # Use AI to generate user-friendly error message
-            error_msg = ai_helper.get_smart_error_message(result.get('error', 'Unknown error'), lang)
-            await processing_msg.edit_text(error_msg)
-    
+            # fallback: send as document
+            await processing.edit_text(get_text(lang, "download_done", platform=platform))
+            await message.reply_document(document=open(file_path, "rb"), caption=get_text(lang, "download_from", platform=platform))
+
+        # Smart post-download suggestion
+        try:
+            tier = get_user_tier(user.id)
+            used = db.get_user_downloads_today(user.id)
+            limit = SUBSCRIPTION_TIERS[tier]["daily_limit"]
+            if used >= limit - 1 and tier != "advanced":
+                suggestion = ai_helper.get_smart_subscription(db.get_user(user.id))
+                if suggestion:
+                    await message.reply_text(suggestion)
+        except Exception as e:
+            logger.debug(f"Suggestion generation failed: {e}")
+
     except Exception as e:
-        logger.error(f"Error handling download: {e}")
-        # Use AI to generate user-friendly error message
-        error_msg = ai_helper.get_smart_error_message(str(e), lang)
-        await processing_msg.edit_text(error_msg)
+        logger.exception(f"Error handling download: {e}")
+        await processing.edit_text(get_text(lang, "error_generic"))
 
-# Admin commands
-async def admin_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /admin_stats command"""
-    user = update.effective_user
-    lang = db.get_user_language(user.id)
-    
-    # Check if user is admin
-    admin_id = int(os.getenv('ADMIN_USER_ID', 0))
-    if user.id != admin_id:
-        await update.message.reply_text(get_text(lang, 'error_admin_only'))
-        return
-    
-    # Get stats
-    stats = db.get_admin_stats()
-    
-    stats_text = (
-        get_text(lang, 'admin_stats_title') + '\n\n' +
-        f"👥 Total Users: {stats['total_users']}\n" +
-        f"💎 Active Subscriptions: {stats['active_subscriptions']}\n" +
-        f"📥 Downloads Today: {stats['downloads_today']}\n" +
-        f"📊 Downloads This Week: {stats['downloads_week']}\n" +
-        f"📈 Downloads This Month: {stats['downloads_month']}\n" +
-        f"🎯 Total Downloads: {stats['total_downloads']}"
-    )
-    
-    await update.message.reply_text(stats_text, parse_mode='Markdown')
-
-async def admin_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /admin_users command"""
-    user = update.effective_user
-    lang = db.get_user_language(user.id)
-    
-    # Check if user is admin
-    admin_id = int(os.getenv('ADMIN_USER_ID', 0))
-    if user.id != admin_id:
-        await update.message.reply_text(get_text(lang, 'error_admin_only'))
-        return
-    
-    # Get users
-    users = db.get_all_users()
-    
-    users_text = get_text(lang, 'admin_users_title', count=len(users)) + '\n\n'
-    
-    for u in users[:20]:  # Show first 20 users
-        username = u['username'] or 'No username'
-        tier = get_user_tier(u['user_id'])
-        users_text += f"• @{username} - {tier}\n"
-    
-    if len(users) > 20:
-        users_text += f"\n... and {len(users) - 20} more users"
-    
-    await update.message.reply_text(users_text, parse_mode='Markdown')
-
-async def admin_subs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /admin_subs command"""
-    user = update.effective_user
-    lang = db.get_user_language(user.id)
-    
-    # Check if user is admin
-    admin_id = int(os.getenv('ADMIN_USER_ID', 0))
-    if user.id != admin_id:
-        await update.message.reply_text(get_text(lang, 'error_admin_only'))
-        return
-    
-    # Get active subscriptions
-    subscriptions = db.get_active_subscriptions()
-    
-    subs_text = get_text(lang, 'admin_subs_title', count=len(subscriptions)) + '\n\n'
-    
-    for sub in subscriptions:
-        username = sub['username'] or 'No username'
-        tier = sub['tier']
-        expiry = sub['expiry_date'].strftime('%Y-%m-%d') if sub['expiry_date'] else 'N/A'
-        subs_text += f"• @{username} - {tier} (expires: {expiry})\n"
-    
-    await update.message.reply_text(subs_text, parse_mode='Markdown')
-
-async def admin_downloads_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /admin_downloads command"""
-    user = update.effective_user
-    lang = db.get_user_language(user.id)
-    
-    # Check if user is admin
-    admin_id = int(os.getenv('ADMIN_USER_ID', 0))
-    if user.id != admin_id:
-        await update.message.reply_text(get_text(lang, 'error_admin_only'))
-        return
-    
-    # Get download stats
-    downloads = db.get_download_stats(days=7)
-    
-    downloads_text = get_text(lang, 'admin_downloads_title') + '\n\n'
-    
-    for download in downloads:
-        date = download['date']
-        count = download['count']
-        downloads_text += f"• {date}: {count} downloads\n"
-    
-    await update.message.reply_text(downloads_text, parse_mode='Markdown')
-
-# Callback query handler
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle button callbacks"""
-    query = update.callback_query
-    callback_data = query.data
-    
-    if callback_data == "start":
-        await start_command(update, context)
-    
-    elif callback_data == "help":
-        await help_command(update, context)
-    
-    elif callback_data == "status":
-        await status_command(update, context)
-    
-    elif callback_data == "subscribe":
-        await subscribe_command(update, context)
-    
-    elif callback_data == "language":
-        await language_command(update, context)
-    
-    elif callback_data.startswith("lang_"):
-        await handle_language_selection(update, context)
-    
-    elif callback_data.startswith("sub_"):
-        await handle_subscription_selection(update, context)
-
-# Main function
-def main():
-    """Start the bot"""
-    # Get bot token from environment
-    token = os.getenv('BOT_TOKEN')
-    
-    # Debug: Print all environment variables (without values)
-    logger.info(f"Environment variables available: {', '.join(os.environ.keys())}")
-    
+# -----------------------------------------------------------------------------
+# Entrypoint
+# -----------------------------------------------------------------------------
+def build_application() -> Application:
+    token = os.getenv("BOT_TOKEN")
     if not token:
-        logger.error("BOT_TOKEN not found in environment variables!")
-        logger.error("Please set BOT_TOKEN in Railway Variables")
-        raise ValueError("BOT_TOKEN is required but not set")
-    
-    logger.info("BOT_TOKEN found successfully!")
-    
-    # Create application
-    application = Application.builder().token(token).build()
-    
-    # Add handlers
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("status", status_command))
-    application.add_handler(CommandHandler("subscribe", subscribe_command))
-    application.add_handler(CommandHandler("language", language_command))
-    
-    # Admin commands
-    application.add_handler(CommandHandler("admin_stats", admin_stats_command))
-    application.add_handler(CommandHandler("admin_users", admin_users_command))
-    application.add_handler(CommandHandler("admin_subs", admin_subs_command))
-    application.add_handler(CommandHandler("admin_downloads", admin_downloads_command))
-    
-    # Message handler for URLs
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    # Callback query handler
-    application.add_handler(CallbackQueryHandler(button_callback))
-    
-    # Start bot
-    logger.info("Bot started successfully!")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+        raise ValueError("BOT_TOKEN not found in environment variables.")
+    app = Application.builder().token(token).build()
 
-if __name__ == '__main__':
-    main()
+    # Commands
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("language", language_command))
+    app.add_handler(CommandHandler("subscribe", subscribe_command))
+
+    # Callback buttons
+    app.add_handler(CallbackQueryHandler(button_callback))
+
+    # Messages
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    return app
+
+if __name__ == "__main__":
+    application = build_application()
+    logger.info("Bot 5 starting...")
+    application.run_polling()
