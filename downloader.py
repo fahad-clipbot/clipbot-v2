@@ -11,6 +11,7 @@ import tempfile
 import re
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
+import sys # [تعديل: تم استيراد مكتبة sys]
 
 logger = logging.getLogger(__name__)
 
@@ -82,11 +83,12 @@ class MediaDownloader:
             temp_dir = tempfile.mkdtemp()
             
             # Prepare yt-dlp command
+            base_cmd = [sys.executable, '-m', 'yt_dlp'] # [تعديل: تشغيل كوحدة]
+            
             if audio_only:
                 # Download audio only
                 output_template = os.path.join(temp_dir, '%(title)s.%(ext)s')
-                cmd = [
-                    'yt-dlp',
+                cmd = base_cmd + [
                     '--extract-audio',
                     '--audio-format', 'mp3',
                     '--audio-quality', '0',
@@ -99,8 +101,7 @@ class MediaDownloader:
             else:
                 # Download video
                 output_template = os.path.join(temp_dir, '%(title)s.%(ext)s')
-                cmd = [
-                    'yt-dlp',
+                cmd = base_cmd + [
                     '--format', 'best[ext=mp4]/best',
                     '--output', output_template,
                     '--no-playlist',
@@ -177,8 +178,11 @@ class MediaDownloader:
             url = self.normalize_url(url)
             platform = self.detect_platform(url)
             
+            # [تعديل: تشغيل كوحدة]
             cmd = [
-                'yt-dlp',
+                sys.executable,
+                '-m',
+                'yt_dlp',
                 '--dump-json',
                 '--no-playlist',
                 '--quiet',
