@@ -36,6 +36,9 @@ db = Database()
 downloader = MediaDownloader()
 paypal = PayPalHandler()
 
+# [التعديل 1: تعريف ADMIN_USER_ID كمتغير عام هنا]
+ADMIN_USER_ID = None
+
 # Subscription tiers
 SUBSCRIPTION_TIERS = {
     'free': {
@@ -88,7 +91,7 @@ def check_download_limit(user_id: int) -> bool:
 def extract_url(text: str) -> str:
     """Extract URL from message text"""
     # URL patterns
-    url_pattern = r'https?://(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&/=]*)'
+    url_pattern = r'https?://(?:www\.)?[-a-zA-Z09@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&/=]*)'
     
     # Try to find URL with http/https
     match = re.search(url_pattern, text)
@@ -398,9 +401,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /admin_stats command"""
     user = update.effective_user
-    admin_id = int(os.getenv('ADMIN_USER_ID', 0))
-    
-    if user.id != admin_id:
+    # [التعديل 3: استخدام المتغير العام ADMIN_USER_ID]
+    if user.id != ADMIN_USER_ID:
         await update.message.reply_text("⛔ Admin only command")
         return
     
@@ -417,9 +419,8 @@ async def admin_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def admin_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /admin_users command"""
     user = update.effective_user
-    admin_id = int(os.getenv('ADMIN_USER_ID', 0))
-    
-    if user.id != admin_id:
+    # [التعديل 3: استخدام المتغير العام ADMIN_USER_ID]
+    if user.id != ADMIN_USER_ID:
         await update.message.reply_text("⛔ Admin only command")
         return
     
@@ -437,9 +438,8 @@ async def admin_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def admin_subs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /admin_subs command"""
     user = update.effective_user
-    admin_id = int(os.getenv('ADMIN_USER_ID', 0))
-    
-    if user.id != admin_id:
+    # [التعديل 3: استخدام المتغير العام ADMIN_USER_ID]
+    if user.id != ADMIN_USER_ID:
         await update.message.reply_text("⛔ Admin only command")
         return
     
@@ -460,6 +460,21 @@ def main():
     if not token:
         logger.error("BOT_TOKEN not found in environment variables")
         return
+    
+    # [التعديل 2: قراءة ADMIN_USER_ID وتعيينه كمتغير عام]
+    # Get admin user ID
+    admin_id_str = os.getenv('ADMIN_USER_ID')
+    if not admin_id_str:
+        logger.error("ADMIN_USER_ID not found in environment variables")
+        return
+        
+    try:
+        global ADMIN_USER_ID
+        ADMIN_USER_ID = int(admin_id_str)
+    except ValueError as e:
+        logger.error(f"Error converting ADMIN_USER_ID to integer: {e}")
+        return
+    # [نهاية التعديل 2]
     
     # Create application
     application = Application.builder().token(token).build()
