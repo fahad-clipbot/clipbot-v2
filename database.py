@@ -7,19 +7,12 @@ import sqlite3
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List
 import logging
-import os # [تعديل 1: تم استيراد مكتبة os]
 
 logger = logging.getLogger(__name__)
 
 class Database:
-    # [تعديل 2: تم تغيير المسار الافتراضي]
-    def __init__(self, db_path: str = "./data/clipbot.db"): 
+    def __init__(self, db_path: str = "clipbot.db"):
         self.db_path = db_path
-        
-        # [تعديل 3: تم إضافة الكود للتأكد من وجود مجلد data]
-        # Ensure the directory for the database file exists
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        
         self.init_database()
     
     def get_connection(self):
@@ -30,69 +23,65 @@ class Database:
     
     def init_database(self):
         """Initialize database tables"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            # Users table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id INTEGER PRIMARY KEY,
-                    username TEXT,
-                    first_name TEXT,
-                    last_name TEXT,
-                    language_code TEXT,
-                    preferred_language TEXT DEFAULT 'ar',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Subscriptions table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS subscriptions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    tier TEXT NOT NULL,
-                    start_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    end_date TIMESTAMP,
-                    payment_id TEXT,
-                    status TEXT DEFAULT 'active',
-                    FOREIGN KEY (user_id) REFERENCES users(user_id)
-                )
-            """)
-            
-            # Downloads table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS downloads (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    url TEXT NOT NULL,
-                    platform TEXT NOT NULL,
-                    media_type TEXT NOT NULL,
-                    download_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    success BOOLEAN DEFAULT 1,
-                    FOREIGN KEY (user_id) REFERENCES users(user_id)
-                )
-            """)
-            
-            # Daily stats table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS daily_stats (
-                    date DATE PRIMARY KEY,
-                    total_downloads INTEGER DEFAULT 0,
-                    total_users INTEGER DEFAULT 0,
-                    new_users INTEGER DEFAULT 0,
-                    active_users INTEGER DEFAULT 0
-                )
-            """)
-            
-            conn.commit()
-            conn.close()
-            logger.info("Database initialized successfully")
-        except Exception as e:
-            logger.error(f"Error initializing database: {e}")
-            raise # [تم إضافة هذا للتأكد من ظهور الخطأ كاملاً]
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Users table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                language_code TEXT,
+                preferred_language TEXT DEFAULT 'ar',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Subscriptions table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                tier TEXT NOT NULL,
+                start_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                end_date TIMESTAMP,
+                payment_id TEXT,
+                status TEXT DEFAULT 'active',
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+        
+        # Downloads table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS downloads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                url TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                media_type TEXT NOT NULL,
+                download_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                success BOOLEAN DEFAULT 1,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+        
+        # Daily stats table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS daily_stats (
+                date DATE PRIMARY KEY,
+                total_downloads INTEGER DEFAULT 0,
+                total_users INTEGER DEFAULT 0,
+                new_users INTEGER DEFAULT 0,
+                active_users INTEGER DEFAULT 0
+            )
+        """)
+        
+        conn.commit()
+        conn.close()
+        logger.info("Database initialized successfully")
     
     # User management
     def add_user(self, user_id: int, username: str = None, first_name: str = None, 
@@ -458,3 +447,4 @@ class Database:
         conn.close()
         
         return [dict(row) for row in rows]
+11
