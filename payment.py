@@ -9,6 +9,8 @@ import logging
 import requests
 import base64
 from datetime import datetime, timedelta
+
+# هذا هو سطر الإصلاح الذي يحل مشكلة NameError
 from database import Database
 
 logger = logging.getLogger(__name__)
