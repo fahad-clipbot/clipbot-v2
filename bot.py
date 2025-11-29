@@ -461,7 +461,6 @@ def main():
         logger.error("BOT_TOKEN not found in environment variables")
         return
     
-    # [التعديل 2: قراءة ADMIN_USER_ID وتعيينه كمتغير عام]
     # Get admin user ID
     admin_id_str = os.getenv('ADMIN_USER_ID')
     if not admin_id_str:
@@ -474,12 +473,15 @@ def main():
     except ValueError as e:
         logger.error(f"Error converting ADMIN_USER_ID to integer: {e}")
         return
-    # [نهاية التعديل 2]
+    
+    # Get deployment mode (WEBHOOK variables)
+    webhook_url = os.getenv('WEBHOOK_URL')  
+    port = int(os.getenv('PORT', '8080'))   # Default to 8080
     
     # Create application
     application = Application.builder().token(token).build()
     
-    # Add handlers
+    # Add handlers (handlers are kept the same as your original file)
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("status", status_command))
@@ -491,9 +493,22 @@ def main():
     application.add_handler(CallbackQueryHandler(button_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # Start bot
-    logger.info("Bot started!")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Start bot based on deployment mode
+    if webhook_url:
+        # Webhook mode for cloud deployment (e.g., Railway)
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=token,
+            webhook_url=f"{webhook_url}/{token}",
+            allowed_updates=Update.ALL_TYPES
+        )
+        logger.info(f"Bot started via Webhook on port {port}")
+    else:
+        # Polling mode for local testing
+        logger.info("Bot started via Polling (Local Mode)")
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
+
 
 if __name__ == '__main__':
     main()
