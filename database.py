@@ -11,9 +11,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 class Database:
-    def __init__(self, db_path: str = "clipbot.db"):
-        self.db_path = db_path
-        self.init_database()
+    def __init__(self, db_path: str = "/tmp/clipbot.db"):
+
     
     def get_connection(self):
         """Get database connection"""
