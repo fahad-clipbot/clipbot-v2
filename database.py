@@ -10,10 +10,43 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+import sqlite3
+
 class Database:
-    def __init__(self, db_path: str = "/tmp/clipbot.db"):# غيّر هذا السطر
+    def __init__(self, db_path: str = "/tmp/clipbot.db"):
         self.db_path = db_path
         self.init_database()
+
+    def get_connection(self):
+        return sqlite3.connect(self.db_path)
+
+    def init_database(self):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                language TEXT,
+                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+    def add_or_update_user(self, user_id: int, username: str, language: str):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO users (user_id, username, language)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username = excluded.username,
+                language = excluded.language,
+                last_seen = CURRENT_TIMESTAMP
+        """, (user_id, username, language))
+        conn.commit()
+        conn.close()
     
     def get_connection(self):
         """Get database connection"""
