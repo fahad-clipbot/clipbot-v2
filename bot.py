@@ -301,11 +301,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_text = update.message.text
     
     # Register user if not exists
-    db.add_or_update_user(
+    db.db.add_or_update_user(
     user_id=update.effective_user.id,
     username=update.effective_user.username,
     language=update.effective_user.language_code
-)
     )
     
     # Extract URL
