@@ -113,11 +113,42 @@ def wants_audio(text: str) -> bool:
     return any(keyword in text_lower for keyword in audio_keywords)
 
 # Command handlers
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start command"""
-    user = update.effective_user
-    lang = db.get_user_language(user.id)
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Sends a welcome message and registers the user."""
     
+    # 1. تحديد الـ Chat ID
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    
+    # 2. جلب رسالة الترحيب
+    lang = db.get_user_language(user_id)
+    welcome_message = get_localization_text("start_message", lang)
+    
+    # 3. محاولة الرد باستخدام الطريقة الموثوقة (context.bot.send_message)
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=welcome_message,
+            parse_mode='HTML' # استخدم 'HTML' أو 'MarkdownV2' حسب صيغة رسائلك
+        )
+        
+        # 4. تسجيل المستخدم أو تأكيد الإدارة
+        if user_id == ADMIN_USER_ID:
+            # لا حاجة للتسجيل مرة أخرى للإدارة، فقط للتسجيل
+            logger.info(f"Admin {user_id} started the bot.")
+        else:
+            # تسجيل المستخدمين الجدد
+            db.register_user(user_id, update.effective_user.username, lang)
+            logger.info(f"New user {user_id} started the bot.")
+            
+    except telegram.error.Forbidden:
+        # إذا استمر الخطأ، فسيتم تسجيله هنا بوضوح
+        logger.error(f"Failed to send start message to {chat_id}: Forbidden - Bot was blocked by user or invalid ID.")
+    except Exception as e:
+        logger.error(f"An unexpected error occurred in start_command for {user_id}: {e}")
+    
+    return
+
     # Register or update user
     db.add_or_update_user(
         user_id=user.id,
