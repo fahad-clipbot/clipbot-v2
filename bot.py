@@ -1,68 +1,31 @@
-"""
-ClipBot V2 - Professional Telegram Bot
-Downloads videos, images, and audio from YouTube, TikTok, Instagram
-With subscription system, PayPal payments, and admin dashboard
-Supports Arabic and English
-TESTED AND WORKING VERSION
-"""
-
+from telegram_handlers import handle_update
 import os
-import logging
-import re
-from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    filters,
-    ContextTypes
-)
-from database import Database
-from downloader import MediaDownloader
-from payment import PayPalHandler
-from translations import get_text, get_user_language
+import time
+import httpx
 
-# Setup logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-# Initialize components
-db = Database()
-downloader = MediaDownloader()
-paypal = PayPalHandler()
+def get_updates(offset=None):
+    params = {"timeout": 30}
+    if offset:
+        params["offset"] = offset
+    with httpx.Client(timeout=40) as client:
+        r = client.post(f"{BASE_URL}/getUpdates", data=params)
+        r.raise_for_status()
+        return r.json().get("result", [])
 
-# Subscription tiers
-SUBSCRIPTION_TIERS = {
-    'free': {
-        'name': 'Free',
-        'price': 0,
-        'daily_limit': 5,
-        'quality': 'standard'
-    },
-    'basic': {
-        'name': 'Basic',
-        'price': 5,
-        'daily_limit': 20,
-        'quality': 'high'
-    },
-    'professional': {
-        'name': 'Professional',
-        'price': 10,
-        'daily_limit': 50,
-        'quality': 'very_high'
-    },
-    'advanced': {
-        'name': 'Advanced',
-        'price': 15,
-        'daily_limit': 100,
-        'quality': 'best'
-    }
-}
+def main():
+    last_update_id = None
+    while True:
+        updates = get_updates(offset=last_update_id + 1 if last_update_id else None)
+        for update in updates:
+            last_update_id = update["update_id"]
+            handle_update(update)
+        time.sleep(1)
+
+if __name__ == "__main__":
+    main()
 
 # Helper functions
 def get_user_tier(user_id: int) -> str:
