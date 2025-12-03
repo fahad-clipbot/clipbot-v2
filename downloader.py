@@ -30,7 +30,7 @@ class MediaDownloader:
                 r'instagram\.com/(?:p|reel)/([a-zA-Z0-9_-]+)',
                 r'instagram\.com/tv/([a-zA-Z0-9_-]+)'
             ]
-        }
+       }
     
     def detect_platform(self, url: str) -> str:
         """Detect platform from URL"""
@@ -215,3 +215,14 @@ class MediaDownloader:
                 'success': False,
                 'error': str(e)
             }
+def fetch_instagram_media(post_url: str) -> list[str]:
+    """
+    ترجع قائمة روابط وسائط (صور/فيديو) لمنشور إنستغرام.
+    استبدل هذا المثال بالطريقة الفعلية اللي تستخدمها.
+    """
+    # مثال تجريبي: رجّع قائمة وهمية
+    return [
+        "https://example.com/media0.jpg",
+        "https://example.com/media1.jpg",
+        "https://example.com/media2.mp4",
+    ]
