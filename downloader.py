@@ -242,3 +242,27 @@ def fetch_youtube_media(url: str) -> list[str]:
 def fetch_twitter_media(url: str) -> list[str]:
     # TODO: ضع منطق جلب تويتر
     return ["https://example.com/twitter1.mp4"]
+import yt_dlp
+
+def fetch_media(url: str) -> list[str]:
+    """
+    ترجع قائمة روابط وسائط (فيديو/صوت/صور) من أي منصة مدعومة (يوتيوب، تيك توك، تويتر، إنستغرام).
+    """
+    try:
+        ydl_opts = {
+            "quiet": True,
+            "skip_download": True,
+            "format": "best",
+        }
+        media_urls = []
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if "entries" in info:  # قائمة تشغيل أو بوست فيه عدة وسائط
+                for entry in info["entries"]:
+                    media_urls.append(entry.get("url"))
+            else:
+                media_urls.append(info.get("url"))
+        return media_urls
+    except Exception as e:
+        print(f"Error fetching media: {e}")
+        return []
