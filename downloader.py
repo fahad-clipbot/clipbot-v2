@@ -225,4 +225,20 @@ def fetch_instagram_media(post_url: str) -> list[str]:
         "https://example.com/media0.jpg",
         "https://example.com/media1.jpg",
         "https://example.com/media2.mp4",
-    ]
+  
+]
+    def fetch_instagram_media(url: str) -> list[str]:
+    # TODO: ضع منطق جلب إنستغرام
+    return ["https://example.com/insta1.jpg"]
+
+def fetch_tiktok_media(url: str) -> list[str]:
+    # TODO: ضع منطق جلب تيك توك
+    return ["https://example.com/tiktok1.mp4"]
+
+def fetch_youtube_media(url: str) -> list[str]:
+    # TODO: ضع منطق جلب يوتيوب (مثلاً باستخدام yt-dlp)
+    return ["https://example.com/youtube1.mp4"]
+
+def fetch_twitter_media(url: str) -> list[str]:
+    # TODO: ضع منطق جلب تويتر
+    return ["https://example.com/twitter1.mp4"]
