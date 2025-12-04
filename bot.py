@@ -3,6 +3,7 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, fil
 from telegram_handlers import handle_update
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # مثل https://dazzling-vitality.up.railway.app
 
 async def start(update, context):
     chat_id = update.effective_chat.id
@@ -12,20 +13,19 @@ async def start(update, context):
     )
 
 async def message_handler(update, context):
-    # تحويل التحديث إلى dict وإرساله لـ handle_update
     await handle_update(update.to_dict())
 
 def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).webhook_url(WEBHOOK_URL).build()
 
-    # أمر /start
     app.add_handler(CommandHandler("start", start))
-
-    # أي رسالة نصية غير أمر
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
-    # تشغيل البوت باستخدام Polling
-    app.run_polling()
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=int(os.getenv("PORT", "8080")),
+        webhook_url=WEBHOOK_URL,
+    )
 
 if __name__ == "__main__":
     main()
