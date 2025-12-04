@@ -3,13 +3,20 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, fil
 from telegram_handlers import handle_update
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # مثل https://dazzling-vitality.up.railway.app
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # مثل https://your-app-name.up.railway.app
 
 async def start(update, context):
     chat_id = update.effective_chat.id
     await context.bot.send_message(
         chat_id=chat_id,
-        text="أهلاً 👋\nأرسل أي رابط (يوتيوب، تيك توك، تويتر، إنستغرام) وسأحمله لك مباشرة 🎬"
+        text=(
+            "👋 أهلاً بك في Clipot V2!\n\n"
+            "📥 أرسل أي رابط من المنصات المدعومة:\n"
+            "- يوتيوب\n- تيك توك\n- تويتر\n- إنستغرام\n\n"
+            "🎬 سأرسل لك الفيديو أو الصورة أو الصوت مباشرة.\n"
+            "💡 لا تحتاج للاشتراك، الخدمة مجانية حالياً.\n"
+            "🛠 لو فيه مشكلة بالرابط، جرب رابط مباشر أو أرسل كلمة 'مساعدة'."
+        )
     )
 
 async def message_handler(update, context):
