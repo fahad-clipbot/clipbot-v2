@@ -10,7 +10,6 @@ async def send_text(chat_id: int, text: str):
     await bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
 
 async def send_media(chat_id: int, media_url: str):
-    # فلترة حسب نوع الوسائط
     if media_url.endswith(".mp4"):
         await bot.send_video(chat_id=chat_id, video=media_url)
     elif media_url.endswith(".jpg") or media_url.endswith(".png"):
@@ -28,10 +27,6 @@ async def handle_update(update: dict):
     chat_id = message["chat"]["id"]
     text = (message.get("text") or "").strip()
 
-    if text == "/start":
-        await send_text(chat_id, "أرسل أي رابط (يوتيوب، تيك توك، تويتر، إنستغرام) وسأحمله لك مباشرة 🎬")
-        return
-
     if text.startswith("http://") or text.startswith("https://"):
         await send_text(chat_id, f"جاري تحميل الوسائط من الرابط...\n{text}")
         media_list = fetch_media(text)
@@ -43,4 +38,4 @@ async def handle_update(update: dict):
             await send_media(chat_id, media_url)
         return
 
-    await send_text(chat_id, "أرسل رابط مدعوم (يوتيوب، تيك توك، تويتر، إنستغرام).")
+    await send_text(chat_id, "📥 أرسل رابط مدعوم من يوتيوب، تيك توك، تويتر، أو إنستغرام.")
