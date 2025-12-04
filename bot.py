@@ -1,19 +1,16 @@
-import asyncio
 import os
-from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes
+from telegram.ext import ApplicationBuilder, MessageHandler, filters
 from telegram_handlers import handle_update
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-async def process_updates(app):
-    updates = await app.bot.get_updates()
-    for update in updates:
-        await handle_update(update.to_dict())
+async def message_handler(update, context):
+    await handle_update(update.to_dict())
 
-async def main():
+def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    await process_updates(app)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
