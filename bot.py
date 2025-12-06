@@ -4,7 +4,7 @@ from telegram_handlers import handle_update
 from aiohttp import web
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # مثل https://your-app-name.up.railway.app
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # مثال: https://worker-production-xxxx.up.railway.app
 
 # نقطة فحص الصحة لـ Railway
 async def health(request):
@@ -30,7 +30,7 @@ async def message_handler(update, context):
     await handle_update(update.to_dict())
 
 def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).webhook_url(WEBHOOK_URL).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
