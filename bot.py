@@ -1,38 +1,41 @@
+from telegram import Bot
+from telegram.constants import ParseMode
 import os
-from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters
-from telegram_handlers import handle_update
+from downloader import fetch_media
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # مثل https://your-app-name.up.railway.app
+bot = Bot(token=BOT_TOKEN)
 
-async def start(update, context):
-    chat_id = update.effective_chat.id
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=(
-            "👋 أهلاً بك في Clipot V2!\n\n"
-            "📥 أرسل أي رابط من المنصات المدعومة:\n"
-            "- يوتيوب\n- تيك توك\n- تويتر\n- إنستغرام\n\n"
-            "🎬 سأرسل لك الفيديو أو الصورة أو الصوت مباشرة.\n"
-            "💡 لا تحتاج للاشتراك، الخدمة مجانية حالياً.\n"
-            "🛠 لو فيه مشكلة بالرابط، جرب رابط مباشر أو أرسل كلمة 'مساعدة'."
-        )
-    )
+async def send_text(chat_id: int, text: str):
+    await bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
 
-async def message_handler(update, context):
-    await handle_update(update.to_dict())
+async def send_media(chat_id: int, media_url: str):
+    if media_url.endswith(".mp4"):
+        await bot.send_video(chat_id=chat_id, video=media_url)
+    elif media_url.endswith(".jpg") or media_url.endswith(".png"):
+        await bot.send_photo(chat_id=chat_id, photo=media_url)
+    elif media_url.endswith(".mp3") or media_url.endswith(".m4a"):
+        await bot.send_audio(chat_id=chat_id, audio=media_url)
+    else:
+        await bot.send_message(chat_id=chat_id, text=f"الرابط: {media_url}")
 
-def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).webhook_url(WEBHOOK_URL).build()
+async def handle_update(update: dict):
+    message = update.get("message") or update.get("edited_message")
+    if not message:
+        return
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    chat_id = message["chat"]["id"]
+    text = (message.get("text") or "").strip()
 
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.getenv("PORT", "8080")),
-        webhook_url=WEBHOOK_URL,
-    )
+    if text.startswith("http://") or text.startswith("https://"):
+        await send_text(chat_id, f"جاري تحميل الوسائط من الرابط...\n{text}")
+        media_list = fetch_media(text)
+        if not media_list:
+            await send_text(chat_id, "ما قدرت أجيب وسائط من الرابط. تأكد إنه مدعوم أو جرب رابط ثاني.")
+            return
 
-if __name__ == "__main__":
-    main()
+        for media_url in media_list:
+            await send_media(chat_id, media_url)
+        return
+
+    await send_text(chat_id, "📥 أرسل رابط مدعوم من يوتيوب، تيك توك، تويتر، أو إنستغرام.")
