@@ -1,3 +1,4 @@
+import set_webhook  # يشغّل السكربت تلقائيًا عند النشر
 import os
 import asyncio
 from aiohttp import web
