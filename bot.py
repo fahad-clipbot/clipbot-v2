@@ -1,7 +1,7 @@
 import os
 import asyncio
 from aiohttp import web
-from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 from telegram_handlers import handle_update
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -31,6 +31,20 @@ async def start(update, context):
 async def message_handler(update, context):
     await handle_update(update.to_dict())
 
+# تشغيل البوت باستخدام Webhook
+async def run_bot():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+
+    await app.initialize()
+    await app.start()
+    await app.updater.start_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        webhook_url=WEBHOOK_URL,
+    )
+
 # تشغيل سيرفر aiohttp الخارجي
 async def run_health_server():
     app = web.Application()
@@ -39,19 +53,6 @@ async def run_health_server():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-
-# تشغيل البوت
-async def run_bot():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-    await app.initialize()
-    await app.start()
-    await app.updater.start_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        webhook_url=WEBHOOK_URL,
-    )
 
 # تشغيل الاثنين معًا
 async def main():
