@@ -1,9 +1,8 @@
-import set_webhook  # يشغّل السكربت تلقائيًا عند النشر
 import os
 import asyncio
 from aiohttp import web
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
-from telegram_handlers import handle_update
+from telegram_handlers import handle_update  # تأكد إن هذا الملف موجود ويحتوي على دالة handle_update
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # مثل https://worker-production-xxxx.up.railway.app
