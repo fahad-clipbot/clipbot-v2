@@ -1,10 +1,12 @@
 import os
+import asyncio
+from aiohttp import web
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters
 from telegram_handlers import handle_update
-from aiohttp import web
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # مثال: https://worker-production-xxxx.up.railway.app
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # مثل https://worker-production-xxxx.up.railway.app
+PORT = int(os.getenv("PORT", "8080"))
 
 # نقطة فحص الصحة لـ Railway
 async def health(request):
@@ -29,21 +31,31 @@ async def start(update, context):
 async def message_handler(update, context):
     await handle_update(update.to_dict())
 
-def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+# تشغيل سيرفر aiohttp الخارجي
+async def run_health_server():
+    app = web.Application()
+    app.router.add_get("/health", health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
 
+# تشغيل البوت
+async def run_bot():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-
-    # إضافة نقطة فحص للصحة
-    app.web_app.add_routes([web.get("/health", health)])
-
-    # تشغيل البوت باستخدام Webhook
-    app.run_webhook(
+    await app.initialize()
+    await app.start()
+    await app.updater.start_webhook(
         listen="0.0.0.0",
-        port=int(os.getenv("PORT", "8080")),
+        port=PORT,
         webhook_url=WEBHOOK_URL,
     )
 
+# تشغيل الاثنين معًا
+async def main():
+    await asyncio.gather(run_bot(), run_health_server())
+
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
